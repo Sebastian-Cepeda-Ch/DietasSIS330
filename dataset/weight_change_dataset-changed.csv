@@ -1,4 +1,4 @@
-Participant ID,Current Weight (lbs),Final Weight (lbs),Duration (weeks)
+ParticipantID,CurrentWeight_lbs,FinalWeight_lbs,Duration
 1,228.4,228.6,1
 2,165.4,167.8,6
 3,142.8,144.2,7
