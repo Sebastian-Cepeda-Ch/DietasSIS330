@@ -11,3 +11,7 @@ json de prueba
   "hip_width_cm": 37,
   "shoulder_hip_dist_cm": 42
 }
+
+inciar el entorno de fastAPI
+
+uvicorn main:app --reload

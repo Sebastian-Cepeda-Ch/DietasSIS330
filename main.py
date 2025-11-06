@@ -31,43 +31,10 @@ class UserInput(BaseModel):
 def read_root():
     return {"Status": "Diet App API running"}
 
-# Este es tu endpoint principal
-@app.post("/generate-prototype-diet")
-def generate_diet(user_data: UserInput):
-    # Aquí irá toda la lógica
-    print(f"Datos recibidos: {user_data}")
-
-    # Por ahora, solo devuelve los datos para probar
-    return {"received_data": user_data}
 
 # ... (definición de app y UserInput) ...
-
-@app.post("/generate-prototype-diet")
-def generate_diet(user_data: UserInput):
-
-    # 1. Calcular Somatotipo
-    somatotype = calcular_somatotipo_simplificado(
-        user_data.shoulder_width_cm, 
-        user_data.hip_width_cm
-    )
-
-    # 2. Calcular BMR (Tasa Metabólica Basal)
-    bmr = calculate_bmr(
-        user_data.gender, 
-        user_data.current_weight_kg, 
-        user_data.height_cm, 
-        user_data.age
-    )
-
-    return {
-        "received_data": user_data,
-        "calculated_somatotype": somatotype,
-        "calculated_bmr": bmr
-    }
     
     # ... (app, UserInput)
-
-# --- ENDPOINT ACTUALIZADO ---
 @app.post("/generate-prototype-diet")
 def generate_diet(user_data: UserInput):
     
