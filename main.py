@@ -1,92 +1,133 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware # <--- IMPORTANTE
 from pydantic import BaseModel
-# Importa TODAS las funciones de tu lógica
-from logic import (
-    calculate_bmr, 
-    calcular_somatotipo_simplificado, 
-    determinar_somatotipo_dominante
-)
-from gemini_client import get_diet_plan 
+from typing import List, Dict, Optional
 import json
+
+# Tus imports de lógica
+from logic import calculate_bmr, calcular_somatotipo_scores
+from gemini_client import get_diet_plan
+from pose_converter import process_image_for_measurements
 
 app = FastAPI()
 
-# Modelo de ENTRADA: Pedimos los CM manualmente
-class UserInput(BaseModel):
+# --- 1. CONFIGURACIÓN DE PERMISOS (CORS) ---
+# Este bloque debe estar JUSTO AQUÍ, antes de los endpoints
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # "*" permite conectarse desde cualquier origen (localhost:5500, etc.)
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite todos los métodos (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],  # Permite todos los encabezados
+)
+
+# --- 2. MODELOS DE DATOS ---
+class UserFormData(BaseModel):
     age: int
-    gender: str # 'male' or 'female'
+    gender: str 
     current_weight_kg: float
     height_cm: float
-    activity_level: str # 'sedentary', 'light', 'moderate', 'active'
-    goal: str # 'lose weight', 'maintain', 'gain muscle'
-    
-    # --- SIMULACIÓN DE MEDIAPIPE ---
-    # Pedimos los datos en CM manualmente
-    shoulder_width_cm: float 
-    hip_width_cm: float
-    shoulder_hip_dist_cm: float # Simplificado a una sola medida promedio
-    
-    
+    activity_level: str 
+    goal: str 
+    country: str
+    city: Optional[str] = None
+    medical_conditions: Optional[str] = "Ninguna"
+
+# --- 3. ENDPOINTS ---
+
 @app.get("/")
 def read_root():
-    return {"Status": "Diet App API running"}
+    return {"Status": "API de Dietas Inteligente - ACTIVA"}
 
+@app.post("/generate-diet-with-image")
+async def generate_diet_with_image(
+    # Recibimos datos como Form fields
+    age: int = Form(...),
+    gender: str = Form(...),
+    current_weight_kg: float = Form(...),
+    height_cm: float = Form(...),
+    activity_level: str = Form(...),
+    goal: str = Form(...),
+    country: str = Form(...),
+    city: str = Form(None),
+    medical_conditions: str = Form("Ninguna"),
+    # Recibimos la imagen
+    file: UploadFile = File(...) 
+):
+    
+    # A. LEER LA IMAGEN
+    image_bytes = await file.read()
+    
+    # B. PROCESAR MEDIAPIPE EN EL BACKEND
+    medidas_cm = process_image_for_measurements(image_bytes, height_cm)
+    
+    if "error" in medidas_cm:
+        # Si no detecta persona, lanzamos error 400
+        raise HTTPException(status_code=400, detail=medidas_cm["error"])
 
-# ... (definición de app y UserInput) ...
+    # C. PREPARAR DATOS PARA GEMINI
+    # Reconstruimos el objeto form_data manual para pasarlo a las funciones
+    class FormDataObj:
+        def __init__(self):
+            self.age = age
+            self.gender = gender
+            self.current_weight_kg = current_weight_kg
+            self.height_cm = height_cm
+            self.activity_level = activity_level
+            self.goal = goal
+            self.country = country
+            self.city = city
+            self.medical_conditions = medical_conditions
     
-    # ... (app, UserInput)
-@app.post("/generate-prototype-diet")
-def generate_diet(user_data: UserInput):
-    
-    # 1. Calcular BMR
-    bmr = calculate_bmr(
-        user_data.gender, 
-        user_data.current_weight_kg, 
-        user_data.height_cm, 
-        user_data.age
-    )
-    
-    # 2. Calcular Somatotipo (con tu función)
-    endo, meso, ecto = calcular_somatotipo_simplificado(
-        user_data.current_weight_kg,
-        user_data.height_cm,
-        user_data.shoulder_width_cm,
-        user_data.hip_width_cm,
-        user_data.shoulder_hip_dist_cm
-    )
-    
-    # 3. Determinar dominante (para Gemini)
-    somatotipo_dominante = determinar_somatotipo_dominante(endo, meso, ecto)
-    
-    # 4. Llamar a GEMINI (ahora con el somatotipo)
-    diet_json = get_diet_plan(
-        user_data.age,
-        user_data.gender,
-        user_data.current_weight_kg,
-        user_data.height_cm,
-        somatotipo_dominante, # ¡Mucho mejor para el prompt!
-        user_data.goal,
-        user_data.activity_level,
-        bmr
-    )
-    
-    # 5. SIMULAR PREDICCIÓN (Igual que antes)
-    target_calories = diet_json.get("resumen_dieta", {}).get("calorias_objetivo_diarias", 2000)
-    activity_multiplier = {"sedentary": 1.2, "light": 1.375, "moderate": 1.55, "active": 1.725}
-    calories_out = bmr * activity_multiplier.get(user_data.activity_level, 1.2)
-    daily_deficit = calories_out - target_calories
-    predicted_change_kg_4_weeks = (daily_deficit * 28) / 7700
+    form_data_obj = FormDataObj()
 
-    # 6. Devolver TODO
+    # Calcular Somatotipo
+    somato_scores = calcular_somatotipo_scores(
+        peso_kg=current_weight_kg,
+        estatura_cm=height_cm,
+        ancho_hombros_cm=medidas_cm["ancho_hombros_cm"],
+        ancho_caderas_cm=medidas_cm["ancho_caderas_cm"],
+        dist_hombro_cadera_cm=medidas_cm["dist_hombro_cadera_cm"]
+    )
+
+    # Calcular BMR
+    bmr = calculate_bmr(gender, current_weight_kg, height_cm, age)
+
+    # D. LLAMAR A GEMINI (Tu Prompt corregido ya está en gemini_client.py)
+    diet_response = get_diet_plan(
+        form_data=form_data_obj,
+        somato_scores=somato_scores,
+        bmr=bmr
+    )
+
+    # E. PREDICCIÓN DE PESO (Cálculo simple)
+    # Intentamos leer las calorias objetivo, si falla usamos 2000 por defecto
+    try:
+        target_cal = diet_response.get("resumen_nutricional", {}).get("calorias_diarias_objetivo", 2000)
+    except:
+        target_cal = 2000
+        
+    # Factores de actividad
+    act_factors = {"sedentary": 1.2, "light": 1.375, "moderate": 1.55, "active": 1.725}
+    factor = act_factors.get(activity_level, 1.2)
+    
+    daily_burn = bmr * factor
+    daily_deficit = daily_burn - target_cal
+    
+    # 7700 kcal = 1kg grasa aprox. Predicción a 28 días.
+    weight_loss_kg = (daily_deficit * 28) / 7700
+    final_weight_pred = current_weight_kg - weight_loss_kg
+
+    # F. RESPUESTA FINAL JSON
     return {
-        "user_info": user_data,
-        "somatotype_analysis": {
-            "components": f"Endo: {endo}, Meso: {meso}, Ecto: {ecto}",
-            "dominant_profile": somatotipo_dominante
+        "status": "success",
+        "user_profile": {
+            "biometrics": medidas_cm,
+            "somatotype_scores": somato_scores
         },
-        "diet_plan_from_gemini": diet_json,
-        "simple_prediction": {
-            "predicted_weight_change_in_4_weeks_kg": round(predicted_change_kg_4_weeks, 2),
-            "disclaimer": "Predicción simple basada en fórmula, no en modelo ML."
+        "diet_plan": diet_response,
+        "prediction_4_weeks": {
+            "estimated_final_weight_kg": round(final_weight_pred, 2),
+            "estimated_loss_kg": round(weight_loss_kg, 2)
         }
     }

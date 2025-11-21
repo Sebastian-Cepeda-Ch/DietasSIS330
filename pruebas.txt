@@ -12,6 +12,18 @@ json de prueba
   "shoulder_hip_dist_cm": 42
 }
 
+dependendicas
+
+pip install google-generativeai python-dotenv
+pip install "uvicorn[standard]"
+pip install fastapi "uvicorn[standard]" pydantic python-dotenv google-generativeai
+
+
 inciar el entorno de fastAPI
 
+
 uvicorn main:app --reload
+
+python -m uvicorn main:app --reload
+
+python -m http.server 5500
